@@ -143,31 +143,72 @@ def make_bar(elapsed, total, length=20) -> str:
 
 def build_embed(st: GuildState) -> discord.Embed:
     t = st.current
+
     if not t:
-        return discord.Embed(description="Nothing is playing.", color=discord.Color.greyple())
-    elapsed  = st.elapsed()
+        return discord.Embed(
+            title="🎵 GLITCH MUSIC",
+            description="Nothing is currently playing.",
+            color=0xff0000
+        )
+
+    elapsed = st.elapsed()
     duration = t.get("duration")
-    bar      = make_bar(elapsed, duration)
-    f_info   = FILTERS.get(st.active_filter, {})
+
     embed = discord.Embed(
-        title="🎵 Now Playing",
-        description=f"### [{t['title']}]({t['webpage']})" if t.get("webpage") else f"### {t['title']}",
-        color=discord.Color.from_rgb(29, 185, 84)
+        title="🎧 GLITCH MUSIC PLAYER",
+        description=f"### [{t['title']}]({t['webpage']})",
+        color=0xff0000
     )
+
     if t.get("thumbnail"):
         embed.set_image(url=t["thumbnail"])
-    embed.add_field(name="", value=f"`{fmt_time(elapsed)}` {make_bar(elapsed, duration)} `{fmt_time(duration)}`", inline=False)
-    fi = f_info.get("emoji", "▶️") + " " + f_info.get("label", "None")
-    parts = [
-        f"🔁 Loop: {'**ON**' if st.loop else 'OFF'}",
-        f"✨ Auto: {'**ON**' if st.autoplay else 'OFF'}",
-        f"🔊 {st.volume}%",
-        f"🎛️ {fi}",
-    ]
-    embed.add_field(name="", value="  •  ".join(parts), inline=False)
+
+    embed.add_field(
+        name="📊 Progress",
+        value=f"`{fmt_time(elapsed)}` {make_bar(elapsed, duration)} `{fmt_time(duration)}`",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎛 Settings",
+        value=(
+            f"🔊 Volume: `{st.volume}%`\n"
+            f"🔁 Loop: `{'ON' if st.loop else 'OFF'}`\n"
+            f"✨ Autoplay: `{'ON' if st.autoplay else 'OFF'}`\n"
+            f"🎚 Filter: `{FILTERS[st.active_filter]['label']}`"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="📜 Queue",
+        value=f"`{len(st.queue)}` songs waiting",
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎤 Uploader",
+        value=f"`{t.get('uploader', 'Unknown')}`",
+        inline=False
+    )
+
     req = t.get("requester")
-    if req and hasattr(req, "display_avatar"):
-        embed.set_footer(text=f"Requested by {req}", icon_url=req.display_avatar.url)
+
+    if req:
+        embed.set_footer(
+            text=f"Requested by {req} • GLITCH MATRIX",
+            icon_url=req.display_avatar.url
+        )
+    else:
+        embed.set_footer(
+            text="GLITCH MATRIX • Premium Music Experience"
+        )
+
+    embed.set_author(
+        name="Now Playing",
+        icon_url=bot.user.display_avatar.url
+    )
+
     return embed
 
 def autoplay_query(track: dict) -> str:
@@ -465,11 +506,22 @@ async def help_cmd(ctx):
 
 @bot.command()
 async def join(ctx):
-    if ctx.author.voice:
-        await ctx.author.voice.channel.connect()
-        await ctx.send("✅ Joined your voice channel!")
-    else:
-        await ctx.send("❌ You must be in a voice channel.")
+    @bot.command()
+async def join(ctx):
+    if not ctx.author.voice:
+        return await ctx.send("❌ You must be in a voice channel.")
+
+    channel = ctx.author.voice.channel
+
+    if ctx.voice_client:
+        if ctx.voice_client.channel == channel:
+            return await ctx.send("✅ I'm already in your voice channel!")
+
+        await ctx.voice_client.move_to(channel)
+        return await ctx.send(f"🔄 Moved to **{channel.name}**")
+
+    await channel.connect()
+    await ctx.send(f"✅ Joined **{channel.name}**")
 
 @bot.command()
 async def leave(ctx):
