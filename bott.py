@@ -523,29 +523,42 @@ async def help_cmd(ctx):
 
 @bot.command()
 async def join(ctx):
-    if not ctx.author.voice:
-        return await ctx.send("❌ You must be in a voice channel.")
+if not ctx.author.voice:
+return await ctx.send("❌ You must be in a voice channel.")
 
-    channel = ctx.author.voice.channel
+channel = ctx.author.voice.channel
+vc = ctx.voice_client
 
-    if ctx.voice_client:
-        if ctx.voice_client.channel == channel:
+try:
+    if vc:
+        if not vc.is_connected():
+            await vc.disconnect(force=True)
+            vc = None
+
+    if vc:
+        if vc.channel == channel:
             return await ctx.send("✅ I'm already in your voice channel!")
 
-        await ctx.voice_client.move_to(channel)
+        await vc.move_to(channel)
         return await ctx.send(f"🔄 Moved to **{channel.name}**")
 
-    await channel.connect()
+    await channel.connect(reconnect=True)
     await ctx.send(f"✅ Joined **{channel.name}**")
+
+except Exception as e:
+    await ctx.send(f"❌ Failed to join: `{e}`")
+    print(e)
 
 @bot.command()
 async def leave(ctx):
-    st = get_state(ctx.guild.id)
-    st.cancel_progress()
-    st.queue.clear()
-    if ctx.voice_client:
-        await ctx.voice_client.disconnect()
-    await ctx.send("👋 Left voice channel.")
+st = get_state(ctx.guild.id)
+st.cancel_progress()
+st.queue.clear()
+
+if ctx.voice_client:
+    await ctx.voice_client.disconnect(force=True)
+
+await ctx.send("👋 Left voice channel.")
 
 @bot.command()
 async def play(ctx, *, query: str):
