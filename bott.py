@@ -142,81 +142,78 @@ def make_bar(elapsed, total, length=20) -> str:
     return "▬" * pos + "🔘" + "▬" * (length - pos)
 
 def build_embed(st: GuildState) -> discord.Embed:
-t = st.current
+    t = st.current
 
-if not t:
-    return discord.Embed(
-        title="🎵 GLITCH MUSIC",
-        description="No music is currently playing.",
+    if not t:
+        return discord.Embed(
+            title="🎵 GLITCH MUSIC",
+            description="No music is currently playing.",
+            color=0xff0000
+        )
+
+    elapsed = st.elapsed()
+    duration = t.get("duration")
+
+    embed = discord.Embed(
+        title="🎧 GLITCH MUSIC PLAYER",
+        description=f"## [{t['title']}]({t['webpage']})",
         color=0xff0000
     )
 
-elapsed = st.elapsed()
-duration = t.get("duration")
+    if t.get("thumbnail"):
+        embed.set_image(url=t["thumbnail"])
 
-embed = discord.Embed(
-    title="🎧 GLITCH MUSIC PLAYER",
-    description=f"## [{t['title']}]({t['webpage']})",
-    color=0xff0000
-)
-
-if t.get("thumbnail"):
-    embed.set_image(url=t["thumbnail"])
-
-embed.add_field(
-    name="📊 Progress",
-    value=f"`{fmt_time(elapsed)}`\n{make_bar(elapsed, duration)}\n`{fmt_time(duration)}`",
-    inline=False
-)
-
-embed.add_field(
-    name="🎚 Audio Settings",
-    value=(
-        f"🔊 **Volume:** `{st.volume}%`\n"
-        f"🎛 **Filter:** `{FILTERS[st.active_filter]['label']}`"
-    ),
-    inline=True
-)
-
-embed.add_field(
-    name="⚙️ Modes",
-    value=(
-        f"🔁 **Loop:** `{'ON' if st.loop else 'OFF'}`\n"
-        f"✨ **Autoplay:** `{'ON' if st.autoplay else 'OFF'}`"
-    ),
-    inline=True
-)
-
-embed.add_field(
-    name="📜 Queue",
-    value=f"`{len(st.queue)}` songs waiting",
-    inline=False
-)
-
-uploader = t.get("uploader", "Unknown")
-embed.add_field(
-    name="🎤 Artist / Uploader",
-    value=f"`{uploader}`",
-    inline=False
-)
-
-req = t.get("requester")
-if req:
-    embed.set_footer(
-        text=f"Requested by {req} • GLITCH MATRIX",
-        icon_url=req.display_avatar.url
-    )
-else:
-    embed.set_footer(
-        text="GLITCH MATRIX • Premium Music Experience"
+    embed.add_field(
+        name="📊 Progress",
+        value=f"`{fmt_time(elapsed)}` {make_bar(elapsed, duration)} `{fmt_time(duration)}`",
+        inline=False
     )
 
-embed.set_author(
-    name="Now Playing",
-    icon_url=bot.user.display_avatar.url
-)
+    embed.add_field(
+        name="🎚 Audio Settings",
+        value=(
+            f"🔊 Volume: `{st.volume}%`\n"
+            f"🎛 Filter: `{FILTERS[st.active_filter]['label']}`"
+        ),
+        inline=True
+    )
 
-return embed
+    embed.add_field(
+        name="⚙️ Modes",
+        value=(
+            f"🔁 Loop: `{'ON' if st.loop else 'OFF'}`\n"
+            f"✨ Autoplay: `{'ON' if st.autoplay else 'OFF'}`"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="📜 Queue",
+        value=f"`{len(st.queue)}` songs waiting",
+        inline=False
+    )
+
+    embed.add_field(
+        name="🎤 Artist / Uploader",
+        value=f"`{t.get('uploader', 'Unknown')}`",
+        inline=False
+    )
+
+    req = t.get("requester")
+    if req and hasattr(req, "display_avatar"):
+        embed.set_footer(
+            text=f"Requested by {req} • GLITCH MATRIX",
+            icon_url=req.display_avatar.url
+        )
+    else:
+        embed.set_footer(text="GLITCH MATRIX • Premium Music Experience")
+
+    embed.set_author(
+        name="Now Playing",
+        icon_url=bot.user.display_avatar.url
+    )
+
+    return embed
 
 def autoplay_query(track: dict) -> str:
     title    = track.get("title", "")
