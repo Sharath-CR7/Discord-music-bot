@@ -49,6 +49,46 @@ FILTERS = {
     "earrape":    {"af": "bass=g=25,treble=g=15", "vol_mult": 2.0, "label": "Ear Rape",  "emoji": "💀"},
 }
 
+# ── Funny roast lines used by !roastme ──────────────────────────────────────
+ROASTS = [
+    "Your taste in music is like your personality — painfully average.",
+    "I've seen better queues at a DMV.",
+    "You play the same song on loop more than my grandma plays bingo.",
+    "Even Spotify's algorithm gave up trying to understand you.",
+    "Your playlist has more skips than a broken DVD.",
+    "I've heard better music from a dial-up modem.",
+    "You added 47 songs to the queue and then left the voice channel. Classic.",
+    "Your music taste called. It wants therapy.",
+    "You really queued a 4-hour lo-fi stream at 3am. We need to talk.",
+    "Even the earrape filter sounds better than your choices.",
+    "You use the bass boost filter on Ed Sheeran. There are no words.",
+    "Your vibe is giving 'person who types 'lol' without actually laughing'.",
+]
+
+# ── Funny compliments for !vibe ───────────────────────────────────────────────
+VIBES = [
+    "Absolute legend. This track is peak human achievement.",
+    "Certified banger. The council approves.",
+    "This song just added 3 years to my life expectancy.",
+    "A+ taste. You're the main character today.",
+    "Your ancestors are proud of this queue.",
+    "This slaps harder than my mom when I got a C in math.",
+    "Even Gordon Ramsay would say this is delicious.",
+    "NASA wants to know your location so they can launch this into space.",
+    "10/10 — would autoplay again.",
+    "Your queue is so clean it sparks joy. Marie Kondo is crying.",
+]
+
+# ── 8-ball responses ──────────────────────────────────────────────────────────
+EIGHT_BALL = [
+    "It is certain. 🎱", "Without a doubt. 🎱", "Yes, definitely. 🎱",
+    "You may rely on it. 🎱", "As I see it, yes. 🎱", "Most likely. 🎱",
+    "Outlook good. 🎱", "Signs point to yes. 🎱", "Reply hazy, try again. 🎱",
+    "Ask again later. 🎱", "Better not tell you now. 🎱", "Cannot predict now. 🎱",
+    "Don't count on it. 🎱", "My reply is no. 🎱", "My sources say no. 🎱",
+    "Outlook not so good. 🎱", "Very doubtful. 🎱",
+]
+
 class GuildState:
     def __init__(self):
         self.queue         = []
@@ -63,6 +103,8 @@ class GuildState:
         self.prog_task     = None
         self.active_filter = "none"
         self._pending_seek = None
+        # For autoplay: track titles already played/tried so we don't repeat
+        self._ap_seen      = set()
 
     def elapsed(self):
         if self.play_start is None:
@@ -105,6 +147,11 @@ def ytdl_extract(query: str) -> dict:
     data = ytdl.extract_info(f"ytsearch:{query}", download=False)
     entries = data.get("entries")
     return entries[0] if entries else data
+
+def ytdl_extract_many(query: str, count: int = 5) -> list:
+    """Return up to `count` results for a search query."""
+    data = ytdl.extract_info(f"ytsearch{count}:{query}", download=False)
+    return data.get("entries", [])
 
 def make_track(data: dict, requester=None) -> dict:
     return {
@@ -229,14 +276,35 @@ def build_embed(st: GuildState) -> discord.Embed:
     return embed
 
 def autoplay_query(track: dict) -> str:
+    """Build a varied search query so autoplay doesn't repeat."""
     title    = track.get("title", "")
     uploader = track.get("uploader", "")
-    if " - " in title:
-        return f"{title.split(' - ')[0].strip()} best songs"
-    if uploader:
-        return f"{uploader} music"
+    # strip tags like (Official Video), [Lyrics] etc.
     clean = re.sub(r"\(.*?\)|\[.*?\]", "", title).strip()
-    return f"{clean} similar music"
+    if " - " in clean:
+        artist, song = clean.split(" - ", 1)
+        queries = [
+            f"{artist.strip()} best songs",
+            f"{song.strip()} similar songs",
+            f"{artist.strip()} mix",
+        ]
+    elif uploader:
+        queries = [
+            f"{uploader} top songs",
+            f"{uploader} music mix",
+            f"{clean} similar",
+        ]
+    else:
+        queries = [
+            f"{clean} similar music",
+            f"{clean} mix",
+            f"songs like {clean}",
+        ]
+    return random.choice(queries)
+
+# ═══════════════════════════════════════════════════════════════
+#  CORE PLAYBACK  (BUG-FIXED)
+# ═══════════════════════════════════════════════════════════════
 
 async def play_next(ctx):
     gid = ctx.guild.id
@@ -246,6 +314,7 @@ async def play_next(ctx):
     if not vc:
         return
 
+    # ── Handle pending seek (filter change / seek command) ───────────────────
     seek = st._pending_seek
     if seek is not None:
         st._pending_seek = None
@@ -268,29 +337,67 @@ async def play_next(ctx):
         st.prog_task = asyncio.create_task(_progress_loop(ctx))
         return
 
+    # ── Loop mode: re-queue current track ONLY when queue is otherwise empty ─
+    # BUG FIX: previously loop re-appended before checking autoplay,
+    # causing the same track to replay even with loop OFF.
+    if st.loop and st.current and not st.queue:
+        st.queue.append(st.current)
+
+    # ── Queue empty → try autoplay ────────────────────────────────────────────
     if not st.queue:
         if st.autoplay and st.current:
+            prev_title = st.current.get("title", "")
+            # BUG FIX: fetch multiple results and pick the first unseen one
             q = autoplay_query(st.current)
+            found = False
             try:
                 loop = asyncio.get_event_loop()
-                data = await loop.run_in_executor(None, lambda: ytdl_extract(q))
-                track = make_track(data, st.current.get("requester"))
-                if track["title"] != st.current["title"]:
-                    st.queue.append(track)
-                else:
-                    await _end_queue(st); return
+                results = await loop.run_in_executor(None, lambda: ytdl_extract_many(q, 5))
+                for entry in results:
+                    if not entry:
+                        continue
+                    t_title = entry.get("title", "")
+                    if t_title and t_title != prev_title and t_title not in st._ap_seen:
+                        track = make_track(entry, st.current.get("requester"))
+                        st._ap_seen.add(t_title)
+                        st.queue.append(track)
+                        found = True
+                        break
             except Exception:
-                await _end_queue(st); return
+                pass
+            if not found:
+                # Widen the search with a different query
+                try:
+                    q2 = autoplay_query(st.current)
+                    results2 = await loop.run_in_executor(None, lambda: ytdl_extract_many(q2, 5))
+                    for entry in results2:
+                        t_title = entry.get("title", "") if entry else ""
+                        if t_title and t_title not in st._ap_seen and t_title != prev_title:
+                            track = make_track(entry, st.current.get("requester"))
+                            st._ap_seen.add(t_title)
+                            st.queue.append(track)
+                            found = True
+                            break
+                except Exception:
+                    pass
+            if not found:
+                await _end_queue(st, ctx)
+                return
         else:
-            await _end_queue(st); return
+            await _end_queue(st, ctx)
+            return
 
+    # ── Pop next track ────────────────────────────────────────────────────────
     track = st.queue.pop(0)
-    if st.loop:
-        st.queue.append(track)
+
+    # BUG FIX: do NOT re-append here for loop — handled above so loop only
+    # triggers when the queue would otherwise be empty, not every track.
     st.current    = track
     st.play_start = time.time()
     st.paused_at  = None
-    st.history.append(track)
+    # Only add to history if it's a new play (not a loop repeat of itself)
+    if not st.history or st.history[-1].get("title") != track.get("title"):
+        st.history.append(track)
 
     try:
         src = build_source(track["url"], filter_name=st.active_filter, volume=st.volume)
@@ -308,10 +415,15 @@ async def play_next(ctx):
     st.np_msg    = await ctx.send(embed=embed, view=view)
     st.prog_task = asyncio.create_task(_progress_loop(ctx))
 
-async def _end_queue(st: GuildState):
+async def _end_queue(st: GuildState, ctx=None):
+    # Clear autoplay seen set so it can discover new songs next session
+    st._ap_seen.clear()
     if st.np_msg:
         try:
-            await st.np_msg.edit(embed=discord.Embed(description="✅ Queue finished.", color=discord.Color.green()), view=None)
+            await st.np_msg.edit(
+                embed=discord.Embed(description="✅ Queue finished. Add more songs or enable autoplay!", color=discord.Color.green()),
+                view=None
+            )
         except Exception:
             pass
     st.current = None
@@ -355,6 +467,10 @@ async def do_filter(ctx, filter_name: str):
     if vc.is_playing() or vc.is_paused():
         vc.stop()
     return True
+
+# ═══════════════════════════════════════════════════════════════
+#  UI COMPONENTS
+# ═══════════════════════════════════════════════════════════════
 
 class SeekModal(discord.ui.Modal, title="⏩ Seek to Position"):
     timestamp = discord.ui.TextInput(label="Timestamp (e.g.  1:30  or  90)", placeholder="Enter a time...", min_length=1, max_length=10)
@@ -480,6 +596,10 @@ class MusicView(discord.ui.View):
     async def seek_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SeekModal(self.ctx))
 
+# ═══════════════════════════════════════════════════════════════
+#  EVENTS
+# ═══════════════════════════════════════════════════════════════
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
@@ -492,49 +612,20 @@ async def on_command_error(ctx, error):
         return await ctx.send("❌ Missing argument. Use `!help` for commands.")
     await ctx.send(f"❌ {error}")
 
-@bot.command(name="help")
-async def help_cmd(ctx):
-    embed = discord.Embed(title="🎵 Music Bot — Commands", color=discord.Color.from_rgb(29, 185, 84))
-    cmds = [
-        ("!play `<song/URL>`",    "Search & play a song"),
-        ("!playtop `<song>`",     "Add to top of queue"),
-        ("!skip",                 "Skip current song"),
-        ("!stop",                 "Stop & clear queue"),
-        ("!pause / !resume",      "Pause or resume"),
-        ("!seek `<1:30>`",        "Jump to timestamp"),
-        ("!volume `<0–200>`",     "Set volume level"),
-        ("!loop",                 "Toggle loop mode"),
-        ("!autoplay",             "Toggle smart autoplay"),
-        ("!shuffle",              "Shuffle the queue"),
-        ("!queue",                "View the queue"),
-        ("!nowplaying",           "Refresh now playing card"),
-        ("!history",              "Recently played songs"),
-        ("!remove `<#>`",         "Remove song from queue"),
-        ("!move `<from>` `<to>`", "Move song in queue"),
-        ("!filter `<name>`",      "Apply an audio filter"),
-        ("!lyrics `<song>`",      "Get lyrics search link"),
-        ("!join / !leave",        "Join or leave voice"),
-    ]
-    for name, desc in cmds:
-        embed.add_field(name=name, value=desc, inline=True)
-    embed.add_field(name="🎛️ Filters", value="`none`  `bassboost`  `superbass`  `nightcore`  `vaporwave`  `8d`  `echo`  `karaoke`  `robot`  `underwater`  `treble`  `soft`  `earrape`", inline=False)
-    embed.set_footer(text="Tip: Use the ⏩ Seek button on the player card to jump to any position!")
-    await ctx.send(embed=embed)
+# ═══════════════════════════════════════════════════════════════
+#  MUSIC COMMANDS
+# ═══════════════════════════════════════════════════════════════
 
 @bot.command()
 async def join(ctx):
     if not ctx.author.voice:
         return await ctx.send("❌ You must be in a voice channel.")
-
     channel = ctx.author.voice.channel
-
     if ctx.voice_client:
         if ctx.voice_client.channel == channel:
             return await ctx.send("✅ I'm already in your voice channel!")
-
         await ctx.voice_client.move_to(channel)
         return await ctx.send(f"🔄 Moved to **{channel.name}**")
-
     await channel.connect()
     await ctx.send(f"✅ Joined **{channel.name}**")
 
@@ -682,7 +773,11 @@ async def loop(ctx):
 async def autoplay(ctx):
     st = get_state(ctx.guild.id)
     st.autoplay = not st.autoplay
-    await ctx.send(f"✨ Autoplay is now **{'ON' if st.autoplay else 'OFF'}**")
+    status = "ON" if st.autoplay else "OFF"
+    msg = f"✨ Autoplay is now **{status}**"
+    if st.autoplay:
+        msg += "\n> I'll automatically find similar songs when the queue runs out!"
+    await ctx.send(msg)
 
 @bot.command()
 async def shuffle(ctx):
@@ -705,8 +800,11 @@ async def queue(ctx):
         embed.add_field(name="Up Next", value=items, inline=False)
     else:
         embed.add_field(name="Up Next", value="Queue is empty.", inline=False)
-    if st.autoplay:
-        embed.set_footer(text="✨ Smart Autoplay is ON")
+    footer = []
+    if st.loop:     footer.append("🔁 Loop ON")
+    if st.autoplay: footer.append("✨ Autoplay ON")
+    if footer:
+        embed.set_footer(text="  •  ".join(footer))
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -755,9 +853,225 @@ async def lyrics(ctx, *, song: str = None):
     embed = discord.Embed(description=f"🎤 **[Search \"{song}\" on Genius →](https://genius.com/search?q={q})**", color=discord.Color.yellow())
     await ctx.send(embed=embed)
 
-# =========================
-# RUN BOT
-# =========================
+# ═══════════════════════════════════════════════════════════════
+#  🎉 FUNNY / FUN COMMANDS
+# ═══════════════════════════════════════════════════════════════
+
+@bot.command()
+async def roastme(ctx):
+    """Get roasted by the bot."""
+    roast = random.choice(ROASTS)
+    embed = discord.Embed(
+        title=f"🔥 Roasting {ctx.author.display_name}...",
+        description=roast,
+        color=discord.Color.orange()
+    )
+    embed.set_footer(text="It's just a joke... mostly. 😈")
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def vibe(ctx):
+    """Get a random vibe check on the current song."""
+    st = get_state(ctx.guild.id)
+    if not st.current:
+        return await ctx.send("Nothing is playing. Your vibe: 💀 nonexistent.")
+    compliment = random.choice(VIBES)
+    embed = discord.Embed(
+        title="✨ Vibe Check",
+        description=f"**{st.current['title']}**\n\n{compliment}",
+        color=discord.Color.gold()
+    )
+    await ctx.send(embed=embed)
+
+@bot.command(name="8ball")
+async def eight_ball(ctx, *, question: str):
+    """Ask the magic 8-ball anything."""
+    answer = random.choice(EIGHT_BALL)
+    embed = discord.Embed(color=discord.Color.dark_purple())
+    embed.add_field(name="❓ Question", value=question, inline=False)
+    embed.add_field(name="🎱 Answer", value=f"**{answer}**", inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def coinflip(ctx):
+    """Flip a coin. The classic decision maker."""
+    result = random.choice(["🪙 **Heads!**", "🪙 **Tails!**"])
+    await ctx.send(result)
+
+@bot.command()
+async def rps(ctx, choice: str):
+    """Play Rock Paper Scissors against the bot. Usage: !rps rock"""
+    choices = ["rock", "paper", "scissors"]
+    emojis  = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+    choice  = choice.lower()
+    if choice not in choices:
+        return await ctx.send("❌ Choose `rock`, `paper`, or `scissors`!")
+    bot_choice = random.choice(choices)
+    wins = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
+    if choice == bot_choice:
+        result = "It's a **tie**! 🤝"
+    elif wins[choice] == bot_choice:
+        result = "You **win**! 🎉 Lucky..."
+    else:
+        result = "I **win**! 🤖 Skill issue."
+    embed = discord.Embed(title="🪨📄✂️ Rock Paper Scissors", color=discord.Color.teal())
+    embed.add_field(name="You", value=f"{emojis[choice]} {choice.title()}", inline=True)
+    embed.add_field(name="Bot", value=f"{emojis[bot_choice]} {bot_choice.title()}", inline=True)
+    embed.add_field(name="Result", value=result, inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def roll(ctx, sides: int = 6):
+    """Roll a dice. Default is d6. Usage: !roll 20"""
+    if sides < 2 or sides > 1000:
+        return await ctx.send("❌ Sides must be between 2 and 1000.")
+    result = random.randint(1, sides)
+    await ctx.send(f"🎲 You rolled a **d{sides}** and got... **{result}**!")
+
+@bot.command()
+async def howdumb(ctx, member: discord.Member = None):
+    """Find out how dumb someone is (it's random, don't worry)."""
+    target = member or ctx.author
+    score  = random.randint(0, 100)
+    if score < 20:
+        label = "Galaxy-brained genius 🧠"
+    elif score < 40:
+        label = "Somewhat intelligent 🤔"
+    elif score < 60:
+        label = "Average human 🙂"
+    elif score < 80:
+        label = "A little slow 🐢"
+    else:
+        label = "Certified Goofball 🤡"
+    bar = "🟩" * (score // 10) + "⬜" * (10 - score // 10)
+    embed = discord.Embed(
+        title=f"🧪 Dumbness Test: {target.display_name}",
+        description=f"{bar}\n**{score}% dumb** — {label}",
+        color=discord.Color.green() if score < 50 else discord.Color.red()
+    )
+    embed.set_footer(text="Purely scientific. Totally accurate. 100% real.")
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def simp(ctx, member: discord.Member = None):
+    """Check someone's simp level."""
+    target = member or ctx.author
+    score  = random.randint(0, 100)
+    if score < 25:
+        label = "Not a simp. Respectable. 😎"
+    elif score < 50:
+        label = "Mild simp. Keep it together. 😅"
+    elif score < 75:
+        label = "Certified Simp™ 💘"
+    else:
+        label = "MAXIMUM SIMP. The council has been notified. 🚨"
+    bar = "❤️" * (score // 10) + "🖤" * (10 - score // 10)
+    embed = discord.Embed(
+        title=f"💘 Simp Meter: {target.display_name}",
+        description=f"{bar}\n**{score}% simp** — {label}",
+        color=discord.Color.pink() if score > 50 else discord.Color.blurple()
+    )
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def cringe(ctx):
+    """Rate the current song's cringe level."""
+    st = get_state(ctx.guild.id)
+    if not st.current:
+        return await ctx.send("Nothing playing. Your silence is 100% cringe though.")
+    score = random.randint(0, 100)
+    bar   = "😬" * (score // 10) + "😎" * (10 - score // 10)
+    embed = discord.Embed(
+        title="😬 Cringe Rating",
+        description=f"**{st.current['title']}**\n\n{bar}\n**{score}% cringe**",
+        color=discord.Color.yellow()
+    )
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def rate(ctx, *, thing: str):
+    """Rate literally anything out of 10."""
+    score = random.randint(0, 10)
+    msgs  = {
+        0: "Absolutely terrible. 🗑️",
+        1: "Nearly as bad as 0. Yikes.",
+        2: "Rough. Very rough.",
+        3: "Not great, not terrible... actually terrible.",
+        4: "Below average. Disappointing.",
+        5: "Exactly average. Boring.",
+        6: "Decent, I guess.",
+        7: "Pretty good actually! 👍",
+        8: "Solid. Respectable.",
+        9: "Excellent! Almost perfect.",
+        10: "PERFECT. Frame it. 🏆",
+    }
+    stars = "⭐" * score + "☆" * (10 - score)
+    embed = discord.Embed(
+        title=f"⭐ Rating: {thing}",
+        description=f"{stars}\n**{score}/10** — {msgs[score]}",
+        color=discord.Color.gold()
+    )
+    await ctx.send(embed=embed)
+
+# ═══════════════════════════════════════════════════════════════
+#  HELP COMMAND
+# ═══════════════════════════════════════════════════════════════
+
+@bot.command(name="help")
+async def help_cmd(ctx):
+    embed = discord.Embed(title="🎵 GLITCH Music Bot — Commands", color=discord.Color.from_rgb(29, 185, 84))
+
+    music_cmds = [
+        ("!play `<song/URL>`",    "Search & play a song"),
+        ("!playtop `<song>`",     "Add to top of queue"),
+        ("!skip",                 "Skip current song"),
+        ("!stop",                 "Stop & clear queue"),
+        ("!pause / !resume",      "Pause or resume"),
+        ("!seek `<1:30>`",        "Jump to timestamp"),
+        ("!volume `<0–200>`",     "Set volume level"),
+        ("!loop",                 "Toggle loop mode"),
+        ("!autoplay",             "Toggle smart autoplay"),
+        ("!shuffle",              "Shuffle the queue"),
+        ("!queue",                "View the queue"),
+        ("!nowplaying",           "Refresh now playing card"),
+        ("!history",              "Recently played songs"),
+        ("!remove `<#>`",         "Remove song from queue"),
+        ("!move `<from>` `<to>`", "Move song in queue"),
+        ("!filter `<name>`",      "Apply an audio filter"),
+        ("!lyrics `[song]`",      "Get lyrics search link"),
+        ("!join / !leave",        "Join or leave voice"),
+    ]
+    for name, desc in music_cmds:
+        embed.add_field(name=name, value=desc, inline=True)
+
+    embed.add_field(
+        name="🎛️ Filters",
+        value="`none`  `bassboost`  `superbass`  `nightcore`  `vaporwave`  `8d`  `echo`  `karaoke`  `robot`  `underwater`  `treble`  `soft`  `earrape`",
+        inline=False
+    )
+
+    funny_cmds = [
+        ("!roastme",              "Get roasted 🔥"),
+        ("!vibe",                 "Vibe check current song"),
+        ("!8ball `<question>`",   "Ask the magic 8-ball"),
+        ("!coinflip",             "Heads or tails"),
+        ("!rps `<r/p/s>`",        "Rock Paper Scissors"),
+        ("!roll `[sides]`",       "Roll a dice"),
+        ("!howdumb `[@user]`",    "Scientific dumbness test"),
+        ("!simp `[@user]`",       "Check simp level"),
+        ("!cringe",               "Rate current song's cringe"),
+        ("!rate `<anything>`",    "Rate literally anything"),
+    ]
+    embed.add_field(name="\u200b", value="**🎉 Fun Commands**", inline=False)
+    for name, desc in funny_cmds:
+        embed.add_field(name=name, value=desc, inline=True)
+
+    embed.set_footer(text="Tip: Use ⏩ Seek button on player card to jump to any position!")
+    await ctx.send(embed=embed)
+
+# ═══════════════════════════════════════════════════════════════
+#  RUN BOT
+# ═══════════════════════════════════════════════════════════════
 
 TOKEN = os.environ.get("TOKEN")
 bot.run(TOKEN)
