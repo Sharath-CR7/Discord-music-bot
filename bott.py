@@ -759,7 +759,6 @@ async def lyrics(ctx, *, song: str = None):
 # RUN BOT
 # =========================
 
-with open("Token.txt", "r", encoding="utf-8") as f:
-    TOKEN = f.read().strip()
+TOKEN = os.environ["DISCORD_TOKEN"]
 
 bot.run(TOKEN)
