@@ -94,7 +94,7 @@ YTDL_OPTS = {
     "cookiefile": "/etc/secrets/cookies.txt",
     "extractor_args": {
         "youtube": {
-            "player_client": ["android", "web"]
+            "player_client": ["web_embedded"]
         }
     }
 }
