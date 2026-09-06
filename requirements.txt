@@ -4,3 +4,4 @@ PyNaCl==1.6.2
 yt-dlp
 yt-dlp-ejs
 bgutil-ytdlp-pot-provider
+
