@@ -94,7 +94,10 @@ YTDL_OPTS = {
     "cookiefile": "/etc/secrets/cookies.txt",
     "extractor_args": {
         "youtube": {
-            "player_client": ["web_embedded"]
+            "player_client": ["mweb"]
+        },
+        "youtubepot-bgutilhttp": {
+            "base_url": os.getenv("POT_PROVIDER_URL")
         }
     }
 }
