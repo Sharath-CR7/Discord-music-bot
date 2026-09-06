@@ -91,7 +91,6 @@ YTDL_OPTS = {
     "extract_flat": False,
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
-    "cookiefile": "/etc/secrets/cookies.txt",
     "extractor_args": {
         "youtube": {
             "player_client": ["mweb"]
