@@ -1,7 +1,5 @@
 discord.py==2.7.1
 davey==0.1.6
 PyNaCl==1.6.2
-yt-dlp
-yt-dlp-ejs
-bgutil-ytdlp-pot-provider
-
+yt-dlp>=2026.09.01
+bgutil-ytdlp-pot-provider==2.0.0
