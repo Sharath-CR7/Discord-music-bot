@@ -92,7 +92,7 @@ YTDL_OPTS = {
     "default_search": "ytsearch",
    "extractor_args": {
     "youtube": {
-        "player_client": ["web_embedded"],
+        "player_client": ["web_embedded" "android"],
         "po_token_provider": "bgutil:http"
     }
 },
