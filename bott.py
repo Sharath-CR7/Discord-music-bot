@@ -14,7 +14,7 @@ intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 intents.voice_states = True
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+bot = commands.Bot(command_prefix="/", intents=intents, help_command=None)
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -105,11 +105,30 @@ YTDL_OPTS = {
 ytdl = yt_dlp.YoutubeDL(YTDL_OPTS)
 
 def ytdl_extract(query: str) -> dict:
-    if query.startswith("http"):
-        return ytdl.extract_info(query, download=False)
-    data = ytdl.extract_info(f"ytsearch:{query}", download=False)
-    entries = data.get("entries")
-    return entries[0] if entries else data
+    try:
+        if query.startswith(("http://", "https://")):
+            info = ytdl.extract_info(query, download=False)
+        else:
+            info = ytdl.extract_info(f"ytsearch1:{query}", download=False)
+
+        if "entries" in info:
+            info = next((e for e in info["entries"] if e), None)
+
+        if not info:
+            return None
+
+        return {
+            "title": info["title"],
+            "url": info["url"],
+            "webpage_url": info["webpage_url"],
+            "duration": info.get("duration", 0),
+            "thumbnail": info.get("thumbnail"),
+            "uploader": info.get("uploader", "Unknown"),
+        }
+
+    except Exception as e:
+        print("YTDL ERROR:", repr(e))
+        return None
 
 def make_track(data: dict, requester=None) -> dict:
     return {
