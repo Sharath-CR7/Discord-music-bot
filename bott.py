@@ -90,11 +90,12 @@ YTDL_OPTS = {
     "noplaylist": True,
     "extract_flat": False,
     "default_search": "ytsearch",
-    "source_address": "0.0.0.0",
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["mweb"]
-        },
+   "extractor_args": {
+    "youtube": {
+        "player_client": ["web_embedded"],
+        "po_token_provider": "bgutil:http"
+    }
+},
         "youtubepot-bgutilhttp": {
             "base_url": os.getenv("POT_PROVIDER_URL")
         }
