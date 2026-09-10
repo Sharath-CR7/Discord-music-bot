@@ -98,6 +98,7 @@ YTDL_OPTS = {
 },
         "youtubepot-bgutilhttp": {
             "base_url": os.getenv("POT_PROVIDER_URL")
+            "disable_innertube": "1"
         }
     }
 }
